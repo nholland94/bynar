@@ -28,3 +28,15 @@ void structPrettyPrint(T)(T st) {
 
   writeln("===================\n");
 }
+
+size_t alignSize(size_t size, size_t alignment) {
+  size_t remainder = size % alignment;
+  return remainder == 0 ? size : size + alignment - remainder;
+}
+
+unittest {
+  assert(alignSize(0x20, 0x20) == 0x20);
+  assert(alignSize(0xa0, 0x20) == 0xa0);
+  assert(alignSize(0xd2, 0x20) == 0xe0);
+  assert(alignSize(0x36, 0x50) == 0x50);
+}

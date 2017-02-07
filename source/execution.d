@@ -57,8 +57,6 @@ struct BufferCollection {
 
     // -- Intialize buffers and adjust buffer sizes for memory alignment
 
-    auto roundTo = function (size_t v, size_t d) => v + (d - v % d);
-
     this.buffers.length = dataSizes.length;
     this.bufferSizes.length = dataSizes.length;
 
@@ -76,12 +74,8 @@ struct BufferCollection {
       bufferInfo.size = this.dataSizes[i];
       enforceVk(vkCreateBuffer(device, &bufferInfo, null, this.buffers.ptr + i));
       vkGetBufferMemoryRequirements(device, this.buffers[i], &memoryRequirements);
-      this.bufferSizes[i] = roundTo(this.dataSizes[i], memoryRequirements.alignment);
+      this.bufferSizes[i] = alignSize(this.dataSizes[i], memoryRequirements.alignment);
     }
-
-    writeln("data sizes: ", map!((s) => format("0x%04x", s))(this.dataSizes));
-    writeln("buffer sizes: ", map!((s) => format("0x%04x", s))(this.bufferSizes));
-    writefln("0x%04x", memoryRequirements.alignment);
   }
 
   size_t requiredMemorySize() {
@@ -303,8 +297,6 @@ struct PipelineCollection {
 
     enforceVk(vkCreateDescriptorPool(device, &poolInfo, null, &this.descriptorPool));
 
-    writeln(desc.descriptorSetLayoutsByDescriptorSet.length);
-
     VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
       descriptorPool: this.descriptorPool,
       descriptorSetCount: desc.descriptorSetCount,
@@ -347,9 +339,6 @@ struct PipelineCollection {
   }
 
   private void writeDescriptorSets(VkDevice device, DescriptorSetData[][][] descriptorSetDataSets) {
-    writeln(this.descriptorSets);
-    writeln(descriptorSetDataSets);
-
     VkWriteDescriptorSet[] writeCommands;
     ulong descriptorSetIndex = 0;
 
@@ -451,8 +440,6 @@ T[] copyOutput(T)(VkDevice device, VkDeviceMemory memory, BufferCollection buffe
 
   // size_t outputSize = bufferCol.dataSizes[$-1];
   // assert(outputSize % T.sizeof == 0);
-  writeln(bufferCol.dataSizes);
-  writeln(T.sizeof);
   size_t outputSize = bufferCol.dataSizes[$-1] - (bufferCol.dataSizes[$-1] % T.sizeof);
 
   T* mappedMemory;
@@ -505,8 +492,6 @@ T[] executeConstructors(T)(VkPhysicalDeviceMemoryProperties deviceMemoryProperti
   }
 
   vkUnmapMemory(device, memory);
-
-  writeln("Memory after execution: ", memoryBuffer);
 
   pipelineCol.cleanup(device);
   pipelineDescriptionCol.cleanup(device);

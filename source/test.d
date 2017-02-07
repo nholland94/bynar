@@ -24,7 +24,7 @@ extern(C) uint debugReportCallback(
     const(char)* pLayerPrefix,
     const(char)* pMessage,
     void* pUserData) nothrow @nogc {
-  fputs("validation message: ", core.stdc.stdio.stderr);
+  fputs("    %%%% ", core.stdc.stdio.stderr);
   fputs(pMessage, core.stdc.stdio.stderr);
   putc('\n', core.stdc.stdio.stderr);
   return VK_FALSE;
@@ -140,16 +140,26 @@ uint[] randomData(int length, int maxValue) {
   return data;
 }
 
-uint[] runTest(PipelineConstructorInterface[] constructors, uint[] data) {
+VkInstance instance;
+VkDebugReportCallbackEXT debugCallback;
+
+void prepareTest() {
   DerelictErupted.load();
 
-  VkInstance instance = initalizeInstance();
+  instance = initalizeInstance();
 
   loadInstanceLevelFunctions(instance);
   loadDeviceLevelFunctions(instance);
 
-  VkDebugReportCallbackEXT debugCallback = setupDebugReportCallback(instance);
+  debugCallback = setupDebugReportCallback(instance);
+}
 
+void cleanupTest() {
+  vkDestroyDebugReportCallbackEXT(instance, debugCallback, null);
+  vkDestroyInstance(instance, null);
+}
+
+uint[] runTest(PipelineConstructorInterface[] constructors, uint[] data) {
   auto deviceResult = initializeDevice(instance);
   VkPhysicalDevice physicalDevice = deviceResult.physicalDevice;
   VkDevice device = deviceResult.logicalDevice;
@@ -166,58 +176,65 @@ uint[] runTest(PipelineConstructorInterface[] constructors, uint[] data) {
 
   vkDestroyDevice(device, null);
 
-  vkDestroyDebugReportCallbackEXT(instance, debugCallback, null);
-  vkDestroyInstance(instance, null);
-
   return output;
 }
 
 /// test sequential copy
 unittest {
-  uint[] data = randomData(1024, 1000);
-
   IntRelExp identityExp = { bytecode: castFrom!(IntRelOp[]).to!(int[])([IntRelOp.Input]).ptr };
   PipelineConstructorInterface[] constructors = [
     new SequentialPC(identityExp, "copy.spv", "f")
   ];
 
-  uint[] output = runTest(constructors, data);
-
-  foreach(i; iota(output.length)) {
-    assert(output[i] == data[i]);
+  void runAndCheck(uint[] data) {
+    uint[] output = runTest(constructors, data);
+    foreach(i; iota(output.length)) {
+      assert(output[i] == data[i]);
+    }
   }
-}
 
-/// test different data size
-unittest {
-  uint[] data = randomData(32, 1000);
-  IntRelExp identityExp = { bytecode: castFrom!(IntRelOp[]).to!(int[])([IntRelOp.Input]).ptr };
-  PipelineConstructorInterface[] constructors = [
-    new SequentialPC(identityExp, "copy.spv", "f")
-  ];
+  int testCount = 20;
 
-  uint[] output = runTest(constructors, data);
+  prepareTest();
 
-  assert(output.length == data.length);
-
-  foreach(i; iota(output.length)) {
-    assert(output[i] == data[i]);
+  writeln("=============");
+  writefln("Copy %d times", testCount);
+  writeln("=============");
+  foreach(i; iota(testCount)) {
+    int len = uniform(0, 5000);
+    writefln("-- copying %d words", len);
+    runAndCheck(randomData(len, 10000));
   }
+
+  cleanupTest();
 }
 
 // test reduce
 unittest {
-  uint[] data = randomData(1024, 1000);
   PipelineConstructorInterface[] constructors = [
     new ReductivePC("reduce.spv", "f")
   ];
 
-  uint[] output = runTest(constructors, data);
-  uint sum = fold!"a+b"(data);
+  void runAndCheck(uint[] data) {
+    uint[] output = runTest(constructors, data);
+    uint sum = fold!"a+b"(data);
+    assert(output.length == 1);
+    writefln("    ** %d == %d **", output[0], sum);
+    assert(output[0] == sum);
+  }
 
-  writeln(sum);
-  writeln(output);
+  int testCount = 20;
 
-  assert(output.length == 1);
-  assert(output[0] == sum);
+  prepareTest();
+
+  writeln("===============");
+  writefln("Reduce %d times", testCount);
+  writeln("===============");
+  foreach(i; iota(testCount)) {
+    int len = uniform(0, 5000);
+    writefln("-- copying %d words", len);
+    runAndCheck(randomData(len, 10000));
+  }
+
+  cleanupTest();
 }

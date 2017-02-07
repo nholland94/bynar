@@ -158,12 +158,10 @@ class ReductivePC : PipelineConstructor {
   }
 
   override void setSize(size_t inputSize, size_t alignment) {
-    auto alignSize = delegate (size_t size) => size + size % alignment;
-
     this.inputSize = inputSize;
     this.outputSize = uint.sizeof;
     this.branches = this.calculateBranches();
-    this.branchSizes = map!alignSize(this.branches).array;
+    this.branchSizes = map!((b) => alignSize(b, alignment))(this.branches).array;
   }
 
   override size_t inputBufferSize() {
@@ -198,11 +196,7 @@ class ReductivePC : PipelineConstructor {
     uint lastInputSize = this.inputSize.to!uint;
     uint inputOffset = 0;
 
-    writeln(this.branchSizes);
-
     foreach(i, branchSize; this.branchSizes[0..$-1]) {
-      writeln(i, "-", inputOffset, "-", inputOffset + lastInputSize);
-
       DescriptorSetData[] dataSet = [
         {
           binding: 0,
@@ -256,21 +250,16 @@ class ReductivePC : PipelineConstructor {
 
     dataSets[$-1] = dataSet;
 
-    writeln(map!(map!((ds) => ds.bufferInfo))(dataSets));
-
     return dataSets;
   }
 
   override void writeCommands(VkCommandBuffer commandBuffer, VkPipelineLayout pipelineLayout, VkDescriptorSet[] descriptorSets) {
-    writeln("branches: ", map!((v) => v / uint.sizeof)(this.branches));
-
     VkMemoryBarrier memoryBarrier = {
       srcAccessMask: VK_ACCESS_SHADER_WRITE_BIT,
       dstAccessMask: VK_ACCESS_SHADER_READ_BIT,
     };
 
     foreach(i, branchSize; this.branches) {
-      writeln(i, "-", branchSize / uint.sizeof);
       vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, [descriptorSets[i]].ptr, 0, null);
       vkCmdDispatch(commandBuffer, (branchSize / uint.sizeof).to!int, 1, 1);
 
