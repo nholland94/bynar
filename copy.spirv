@@ -1,0 +1,43 @@
+                OpCapability Shader
+                OpMemoryModel Logical Simple
+                OpEntryPoint GLCompute %func "f" %v_in %v_out %v_g_index
+                OpExecutionMode %func LocalSize 1 1 1
+
+                OpDecorate %t_struct BufferBlock
+                OpDecorate %v_g_index BuiltIn GlobalInvocationId
+                OpDecorate %v_in DescriptorSet 0
+                OpDecorate %v_in Binding 0
+                OpDecorate %v_out DescriptorSet 0
+                OpDecorate %v_out Binding 1
+                OpDecorate %t_in_arr ArrayStride 4
+                OpMemberDecorate %t_struct 0 Offset 0
+
+%t_void       = OpTypeVoid
+%t_func       = OpTypeFunction %t_void
+%t_int        = OpTypeInt 32 1
+
+%c_zero       = OpConstant %t_int 0
+%c_in_sz      = OpConstant %t_int 1024
+
+%t_in_arr     = OpTypeArray %t_int %c_in_sz
+%t_struct     = OpTypeStruct %t_in_arr
+%t_vec        = OpTypeVector %t_int 3
+%t_u_struct_p = OpTypePointer Uniform %t_struct
+%t_u_int_p    = OpTypePointer Uniform %t_int
+%t_in_vec_p   = OpTypePointer Input %t_vec
+%t_in_int_p   = OpTypePointer Input %t_int
+
+%v_in         = OpVariable %t_u_struct_p Uniform
+%v_out        = OpVariable %t_u_struct_p Uniform
+%v_g_index    = OpVariable %t_in_vec_p Input
+
+%func         = OpFunction %t_void None %t_func
+%label        = OpLabel
+%g_index_p    = OpAccessChain %t_in_int_p %v_g_index %c_zero
+%g_index      = OpLoad %t_int %g_index_p
+%in_p         = OpAccessChain %t_u_int_p %v_in %c_zero %g_index
+%out_p        = OpAccessChain %t_u_int_p %v_out %c_zero %g_index
+%in           = OpLoad %t_int %in_p
+                OpStore %out_p %in
+                OpReturn
+                OpFunctionEnd

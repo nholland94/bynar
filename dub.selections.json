@@ -1,0 +1,10 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"derelict-util": "2.0.6",
+		"erupted": "1.4.10",
+		"wayland-client-d": "1.8.90",
+		"xcb-d": "2.1.0+1.11.1",
+		"xlib-d": "0.1.1"
+	}
+}

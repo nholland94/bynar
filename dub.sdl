@@ -1,0 +1,8 @@
+name "bynar"
+description "A Vulkan compute example"
+authors "Nathan Holland"
+copyright "Copyright © 2016, Nathan Holland"
+license "proprietary"
+
+dependency "erupted" version="~>1.4.4"
+subConfiguration "erupted" "with-derelict-loader"

@@ -1,0 +1,56 @@
+                   OpCapability Shader
+                   OpMemoryModel Logical Simple
+                   OpEntryPoint GLCompute %func "f" %v_in_buf_p %v_out_buf_p %v_g_inv_p
+                   OpExecutionMode %func LocalSize 1 1 1
+
+                   OpDecorate %t_buf BufferBlock
+                   OpMemberDecorate %t_buf 0 Offset 0
+
+                   OpDecorate %v_g_inv_p BuiltIn GlobalInvocationId
+
+                   OpDecorate %v_in_buf_p DescriptorSet 0
+                   OpDecorate %v_in_buf_p Binding 0
+
+                   OpDecorate %v_out_buf_p DescriptorSet 0
+                   OpDecorate %v_out_buf_p Binding 1
+
+%t_void          = OpTypeVoid
+%t_func          = OpTypeFunction %t_void
+%t_int           = OpTypeInt 32 1
+%t_int_rarr      = OpTypeRuntimeArray %t_int
+%t_buf           = OpTypeStruct %t_int_rarr
+%t_vec3          = OpTypeVector %t_int 3
+
+%t_p_in_int      = OpTypePointer Input %t_int
+%t_p_in_vec3     = OpTypePointer Input %t_vec3
+%t_p_un_int      = OpTypePointer Uniform %t_int
+%t_p_un_buf      = OpTypePointer Uniform %t_buf
+
+%c_zero          = OpConstant %t_int 0
+%c_one           = OpConstant %t_int 1
+%c_two           = OpConstant %t_int 2
+
+%v_in_buf_p      = OpVariable %t_p_un_buf Uniform
+%v_out_buf_p     = OpVariable %t_p_un_buf Uniform
+%v_g_inv_p       = OpVariable %t_p_in_vec3 Input
+
+%func            = OpFunction %t_void None %t_func
+%label           = OpLabel
+
+%g_inv_p         = OpAccessChain %t_p_in_int %v_g_inv_p %c_zero
+%g_inv           = OpLoad %t_int %g_inv_p
+
+%a_index         = OpIMul %t_int %g_inv %c_two
+%b_index         = OpIAdd %t_int %a_index %c_one
+
+%a_p             = OpAccessChain %t_p_un_int %v_in_buf_p %c_zero %a_index
+%b_p             = OpAccessChain %t_p_un_int %v_in_buf_p %c_zero %b_index
+
+%a               = OpLoad %t_int %a_p
+%b               = OpLoad %t_int %b_p
+%c               = OpIAdd %t_int %a %b
+
+%out_p           = OpAccessChain %t_p_un_int %v_out_buf_p %c_zero %g_inv
+                   OpStore %out_p %c
+                   OpReturn
+                   OpFunctionEnd
