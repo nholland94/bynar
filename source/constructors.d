@@ -19,7 +19,27 @@ struct DescriptorSetData {
   uint layoutIndex;
   VkDescriptorType descriptorType;
   VkDescriptorBufferInfo bufferInfo;
-};
+}
+
+enum BufferType {
+  STORAGE_BUFFER = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+}
+
+// struct MemoryBlockDescriptor {
+//   VkBuffer buffer;
+//   ulong size;
+// }
+
+struct DescriptorSetIndices {
+  ulong layoutIndex;
+  ulong bufferIndex;
+}
+
+struct PipelineDescriptorInformation {
+  BufferType[][] layouts;
+  ulong[] blocks;
+  DescriptorSetIndices[][][] descriptorSets;
+}
 
 interface PipelineConstructorInterface {
   /++ Sets the pipeline constructor input size +/
@@ -34,6 +54,7 @@ interface PipelineConstructorInterface {
   string shaderModuleEntryPoint();
 
   /++ Describe descriptor set bindings and layouts +/
+  PipelineDescriptorInformation getDescriptorInformation();
   VkDescriptorSetLayoutBinding[][] descriptorSetLayoutBindings();
   DescriptorSetData[][] descriptorSetDataSets(VkBuffer inputBuffer, VkBuffer outputBuffer);
 
@@ -56,7 +77,7 @@ abstract class PipelineConstructor : PipelineConstructorInterface {
   }
 
   void setSize(size_t inputSize, size_t alignment) {
-    this.inputSize = inputSize;
+    this.inputSize = alignSize(inputSize, alignment);
     this.outputSize = outputExp.evaluate(inputSize);
   }
 
@@ -65,6 +86,7 @@ abstract class PipelineConstructor : PipelineConstructorInterface {
   string shaderModuleName() { return this.shaderName; }
   string shaderModuleEntryPoint() { return this.shaderEntryPoint; }
 
+  abstract PipelineDescriptorInformation getDescriptorInformation();
   abstract VkDescriptorSetLayoutBinding[][] descriptorSetLayoutBindings();
   abstract DescriptorSetData[][] descriptorSetDataSets(VkBuffer inputBuffer, VkBuffer outputBuffer);
   abstract void writeCommands(VkCommandBuffer commandBuffer, VkPipelineLayout pipelineLayout, VkDescriptorSet[] descriptorSets);
@@ -74,6 +96,21 @@ class SequentialPC : PipelineConstructor {
   // Not sure why this is necessary, but the compiler wants it
   this(IntRelExp outputExp, string shaderName, string shaderEntryPoint) {
     super(outputExp, shaderName, shaderEntryPoint);
+  }
+
+  override PipelineDescriptorInformation getDescriptorInformation() {
+    PipelineDescriptorInformation info = {
+      layouts: [
+        [ BufferType.STORAGE_BUFFER, BufferType.STORAGE_BUFFER ]
+      ],
+      blocks: [
+        this.inputBufferSize(),
+        this.outputBufferSize()
+      ],
+      descriptorSets: [ [ [ { 0, 0 }, { 0, 1 } ] ] ]
+    };
+
+    return info;
   }
 
   override VkDescriptorSetLayoutBinding[][] descriptorSetLayoutBindings() {
@@ -132,6 +169,44 @@ class SequentialPC : PipelineConstructor {
   }
 }
 
+private uint[] calculateBranches(size_t length) {
+  FloatingPointControl fpctrl;
+  fpctrl.rounding = FloatingPointControl.roundUp;
+
+  size_t lengthLeft = length;
+  uint[] brs;
+  size_t halfLength;
+
+  // -- TODO replace this with math equation
+  do {
+    halfLength = lengthLeft / 2 + lengthLeft % 2;
+    brs[++brs.length - 1] = halfLength.to!uint;
+    lengthLeft = halfLength;
+  } while(lengthLeft > 1);
+
+  return brs;
+}
+
+unittest {
+  bool equal(uint[] a, uint[] b) {
+    if(a.length != b.length)
+      return false;
+
+    foreach(i; iota(a.length)) {
+      if(a[i] != b[i])
+        return false;
+    }
+
+    return true;
+  }
+
+  assert(equal(calculateBranches(256), [128, 64, 32, 16, 8, 4, 2, 1]));
+  assert(equal(calculateBranches(46), [23, 12, 6, 3, 2, 1]));
+  assert(equal(calculateBranches(100), [50, 25, 13, 7, 4, 2, 1]));
+  assert(equal(calculateBranches(61), [31, 16, 8, 4, 2, 1]));
+  assert(equal(calculateBranches(63), [32, 16, 8, 4, 2, 1]));
+}
+
 class ReductivePC : PipelineConstructor {
   private Nullable!(uint[]) branches;
   private Nullable!(size_t[]) branchSizes;
@@ -142,30 +217,35 @@ class ReductivePC : PipelineConstructor {
     super(outputExp, shaderName, shaderEntryPoint);
   }
 
-  private uint[] calculateBranches() {
-    size_t inputSizeLeft = this.inputSize;
-    uint[] brs;
-    size_t halfInputSize;
-
-    // -- TODO replace this with math equation
-    do {
-      halfInputSize = round(inputSizeLeft.to!float / 2.0).to!size_t;
-      brs[++brs.length - 1] = halfInputSize.to!uint;
-      inputSizeLeft = inputSizeLeft - halfInputSize;
-    } while(halfInputSize > uint.sizeof);
-
-    return brs;
-  }
-
   override void setSize(size_t inputSize, size_t alignment) {
-    this.inputSize = inputSize;
+    this.inputSize = alignSize(inputSize, alignment);
     this.outputSize = uint.sizeof;
-    this.branches = this.calculateBranches();
-    this.branchSizes = map!((b) => alignSize(b, alignment))(this.branches).array;
+    this.branches = calculateBranches(inputSize / uint.sizeof);
+    this.branchSizes = map!((b) => alignSize(b * uint.sizeof, alignment))(this.branches).array;
   }
 
   override size_t inputBufferSize() {
     return (this.inputSize + reduce!"a+b"(this.branchSizes));
+  }
+
+  override PipelineDescriptorInformation getDescriptorInformation() {
+    DescriptorSetIndices[][][] descriptorSetIndices;
+    descriptorSetIndices.length = this.branches.length;
+
+    foreach(i; iota(this.branches.length)) {
+      DescriptorSetIndices[][] indices = [ [ { 0, i }, { 0, i + 1 } ] ];
+      descriptorSetIndices[i] = indices;
+    }
+
+    PipelineDescriptorInformation info = {
+      layouts: [
+        [ BufferType.STORAGE_BUFFER, BufferType.STORAGE_BUFFER ]
+      ],
+      blocks: this.branchSizes ~ [this.outputBufferSize()],
+      descriptorSets: descriptorSetIndices
+    };
+
+    return info;
   }
 
   override VkDescriptorSetLayoutBinding[][] descriptorSetLayoutBindings() {
@@ -193,7 +273,7 @@ class ReductivePC : PipelineConstructor {
     DescriptorSetData[][] dataSets;
     dataSets.length = this.branches.length;
 
-    uint lastInputSize = this.inputSize.to!uint;
+    uint lastInputSize = (this.inputSize + this.inputSize % 2).to!uint;
     uint inputOffset = 0;
 
     foreach(i, branchSize; this.branchSizes[0..$-1]) {
@@ -261,7 +341,7 @@ class ReductivePC : PipelineConstructor {
 
     foreach(i, branchSize; this.branches) {
       vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, [descriptorSets[i]].ptr, 0, null);
-      vkCmdDispatch(commandBuffer, (branchSize / uint.sizeof).to!int, 1, 1);
+      vkCmdDispatch(commandBuffer, branchSize.to!int, 1, 1);
 
       if(i < this.branches.length - 1) {
         vkCmdPipelineBarrier(

@@ -223,16 +223,26 @@ unittest {
     assert(output[0] == sum);
   }
 
-  int testCount = 20;
+  int smallTestCount = 20;
+  int largeTestCount = 5;
 
   prepareTest();
 
-  writeln("===============");
-  writefln("Reduce %d times", testCount);
-  writeln("===============");
-  foreach(i; iota(testCount)) {
-    int len = uniform(0, 5000);
-    writefln("-- copying %d words", len);
+  writeln("=======================");
+  writefln("Reduce %d small vectors", smallTestCount);
+  writeln("=======================");
+  foreach(i; iota(smallTestCount)) {
+    int len = uniform(10, 5000);
+    writefln("-- summing %d words", len);
+    runAndCheck(randomData(len, 10000));
+  }
+
+  writeln("=======================");
+  writefln("Reduce %d large vectors", largeTestCount);
+  writeln("=======================");
+  foreach(i; iota(largeTestCount)) {
+    int len = uniform(100000, 10000000);
+    writefln("-- summing %d words", len);
     runAndCheck(randomData(len, 10000));
   }
 

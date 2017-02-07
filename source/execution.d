@@ -468,7 +468,18 @@ T[] executeConstructors(T)(VkPhysicalDeviceMemoryProperties deviceMemoryProperti
   enforceVk(vkCreateCommandPool(device, &commandPoolInfo, null, &commandPool));
 
   BufferCollection bufferCol = BufferCollection(device, constructors, data.length * T.sizeof, [queueFamilyIndex], limits);
+
   VkDeviceMemory memory = allocateDeviceMemory(device, deviceMemoryProperties, bufferCol.requiredMemorySize());
+
+  T* mappedMemory;
+  enforceVk(vkMapMemory(device, memory, 0, bufferCol.requiredMemorySize().to!uint, 0, castFrom!(T**).to!(void**)(&mappedMemory)));
+
+  foreach(i; iota(bufferCol.requiredMemorySize() / T.sizeof)) {
+    *(mappedMemory + i) = 0;
+  }
+
+  vkUnmapMemory(device, memory);
+  
   bufferCol.bindMemory(device, memory);
 
   PipelineDescriptionCollection pipelineDescriptionCol = PipelineDescriptionCollection(device, constructors, bufferCol.buffers);
@@ -481,7 +492,6 @@ T[] executeConstructors(T)(VkPhysicalDeviceMemoryProperties deviceMemoryProperti
   pipelineCol.submitQueue(queue);
   T[] output = copyOutput!T(device, memory, bufferCol);
 
-  T* mappedMemory;
   T[] memoryBuffer;
   memoryBuffer.length = bufferCol.requiredMemorySize() / T.sizeof;
 
@@ -492,6 +502,8 @@ T[] executeConstructors(T)(VkPhysicalDeviceMemoryProperties deviceMemoryProperti
   }
 
   vkUnmapMemory(device, memory);
+
+  // writeln("resulting memory: ", memoryBuffer);
 
   pipelineCol.cleanup(device);
   pipelineDescriptionCol.cleanup(device);
