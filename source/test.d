@@ -1,6 +1,7 @@
 import std.algorithm.iteration;
 import std.array;
 import std.conv;
+import std.datetime;
 import std.exception;
 import std.file;
 import std.random;
@@ -11,9 +12,10 @@ import std.typecons;
 import erupted;
 
 import common;
-import constructors;
-import int_rel_exp;
-import execution;
+import device;
+import execution_strategies;
+import execution_pipeline;
+import input_rel_exp;
 
 extern(C) uint debugReportCallback(
     VkDebugReportFlagsEXT flags,
@@ -159,35 +161,35 @@ void cleanupTest() {
   vkDestroyInstance(instance, null);
 }
 
-uint[] runTest(PipelineConstructorInterface[] constructors, uint[] data) {
-  auto deviceResult = initializeDevice(instance);
-  VkPhysicalDevice physicalDevice = deviceResult.physicalDevice;
-  VkDevice device = deviceResult.logicalDevice;
-  VkQueue queue = deviceResult.queue;
-  uint queueFamilyIndex = deviceResult.queueFamilyIndex;
+uint[] runTest(ExecutionModule[] modules, ExecutionStage[] stages, uint[] data) {
+  Device device = new Device(instance);
+  ExecutionPipeline p = new ExecutionPipeline(device, modules, stages, data.length * uint.sizeof);
 
-  VkPhysicalDeviceMemoryProperties memoryProperties;
-  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+  uint[] output = p.execute(data);
 
-  VkPhysicalDeviceProperties properties;
-  vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-
-  uint[] output = executeConstructors!uint(memoryProperties, properties.limits, device, queue, queueFamilyIndex, constructors, data);
-
-  vkDestroyDevice(device, null);
+  p.cleanup();
+  device.cleanup();
 
   return output;
 }
 
+ExecutionModule loadExecutionModule(string name) {
+  uint[] code = castFrom!(void[]).to!(uint[])(read(name));
+  return ExecutionModule(name, code);
+}
+
 /// test sequential copy
 unittest {
-  IntRelExp identityExp = { bytecode: castFrom!(IntRelOp[]).to!(int[])([IntRelOp.Input]).ptr };
-  PipelineConstructorInterface[] constructors = [
-    new SequentialPC(identityExp, "copy.spv", "f")
+  InputRelExp identityExp = { bytecode: castFrom!(InputRelOp[]).to!(int[])([InputRelOp.Input]).ptr };
+  ExecutionModule[] modules = [
+    loadExecutionModule("copy.spv")
+  ];
+  ExecutionStage[] stages = [
+    { 0, "f", new Sequential(identityExp) }
   ];
 
   void runAndCheck(uint[] data) {
-    uint[] output = runTest(constructors, data);
+    uint[] output = runTest(modules, stages, data);
     foreach(i; iota(output.length)) {
       assert(output[i] == data[i]);
     }
@@ -201,25 +203,30 @@ unittest {
   writefln("Copy %d times", testCount);
   writeln("=============");
   foreach(i; iota(testCount)) {
-    int len = uniform(0, 5000);
+    int len = uniform(0, 5_000);
     writefln("-- copying %d words", len);
-    runAndCheck(randomData(len, 10000));
+    runAndCheck(randomData(len, 10_000));
   }
 
   cleanupTest();
 }
 
-// test reduce
+/// test reduce
 unittest {
-  PipelineConstructorInterface[] constructors = [
-    new ReductivePC("reduce.spv", "f")
+  ExecutionModule[] modules = [
+    loadExecutionModule("reduce.spv")
+  ];
+  ExecutionStage[] stages = [
+    { 0, "f", new Reductive() }
   ];
 
   void runAndCheck(uint[] data) {
-    uint[] output = runTest(constructors, data);
+    uint[] output;
+    auto r = benchmark!(() => output = runTest(modules, stages, data))(1);
+    writeln(r[0].to!Duration);
     uint sum = fold!"a+b"(data);
+    writeln(output[0], " = ", sum);
     assert(output.length == 1);
-    writefln("    ** %d == %d **", output[0], sum);
     assert(output[0] == sum);
   }
 
@@ -232,19 +239,23 @@ unittest {
   writefln("Reduce %d small vectors", smallTestCount);
   writeln("=======================");
   foreach(i; iota(smallTestCount)) {
-    int len = uniform(10, 5000);
+    int len = uniform(10, 5_000);
     writefln("-- summing %d words", len);
-    runAndCheck(randomData(len, 10000));
+    runAndCheck(randomData(len, 10_000));
   }
 
   writeln("=======================");
   writefln("Reduce %d large vectors", largeTestCount);
   writeln("=======================");
   foreach(i; iota(largeTestCount)) {
-    int len = uniform(100000, 10000000);
+    int len = uniform(1_000_000, 10_000_000);
     writefln("-- summing %d words", len);
-    runAndCheck(randomData(len, 10000));
+    runAndCheck(randomData(len, 10_000));
   }
 
   cleanupTest();
+}
+
+/// test linear constructors
+unittest {
 }
