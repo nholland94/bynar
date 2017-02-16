@@ -1,11 +1,14 @@
 language: d
-dist: trusty
+dist: precise
 sudo: required
 
 addons:
   apt:
     packages:
       - software-properties-common
+      - libvulkan-dev
+      - libvulkan1
+      - vulkan-utils
 
 before_script:
   - git clone --branch spirv-1.1-rev1 https://github.com/KhronosGroup/SPIRV-Tools.git ~/spirv-tools
