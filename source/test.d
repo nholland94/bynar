@@ -164,9 +164,17 @@ void cleanupTest() {
 
 uint[] runTest(ExecutionModule[] modules, ExecutionStage[] stages, uint[] data) {
   Device device = new Device(instance);
-  ExecutionPipeline p = new ExecutionPipeline(device, modules, stages, data.length * uint.sizeof);
 
-  uint[] output = p.execute(data);
+  ExecutionPipeline p;
+  auto r = benchmark!(() => p = new ExecutionPipeline(device, modules, stages, data.length * uint.sizeof))(1);
+  writeln("preparation: ", r[0].to!Duration);
+
+  // ExecutionPipeline p = new ExecutionPipeline(device, modules, stages, data.length * uint.sizeof);
+
+  uint[] output;
+  r = benchmark!(() => output = p.execute(data))(1);
+  writeln("execution: ", r[0].to!Duration);
+  // uint[] output = p.execute(data);
 
   p.cleanup();
   device.cleanup();
@@ -242,10 +250,10 @@ unittest {
   ];
 
   void runAndCheck(uint[] data) {
-    uint[] output;
-    auto r = benchmark!(() => output = runTest(modules, stages, data))(1);
-    writeln(r[0].to!Duration);
-    uint sum = fold!"a+b"(data);
+    uint[] output = runTest(modules, stages, data);
+    uint sum;
+    auto r = benchmark!(() => sum = fold!"a+b"(data))(1);
+    writeln("cpu: ", r[0].to!Duration);
     writeln(output[0], " = ", sum);
     assert(output.length == 1);
     assert(output[0] == sum);

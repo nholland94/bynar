@@ -1,9 +1,11 @@
 language: d
-dist: precise
+dist: trusty
 sudo: required
 
 addons:
   apt:
+    sources:
+      - debian-sid
     packages:
       - software-properties-common
       - libvulkan-dev
