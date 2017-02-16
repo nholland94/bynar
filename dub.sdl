@@ -6,3 +6,14 @@ license "proprietary"
 
 dependency "erupted" version="~>1.4.4"
 subConfiguration "erupted" "with-derelict-loader"
+
+configuration "app" {
+  targetType "executable"
+  excludedSourceFiles "source/benchmark.d"
+}
+
+configuration "benchmark" {
+  targetType "executable"
+  mainSourceFile "source/benchmark.d"
+  excludedSourceFiles "source/app.d"
+}

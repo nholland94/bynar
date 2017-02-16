@@ -58,6 +58,121 @@ private VkDescriptorSetLayoutBinding[] processLayoutBindings(BufferType[] bindin
   return bindings;
 }
 
+// -- Abstracts array used for descriptor type reference counting
+// this abstraction requires some assumptions about the VkDescriptorType
+// enum and thus, may need to be changed for future version of Vulkan
+private class DescriptorTypeCounter {
+  uint[] counts; 
+
+  this() {
+    counts.length = VkDescriptorType.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT + 1;
+  }
+
+  void add(VkDescriptorType t) {
+    counts[castFrom!VkDescriptorType.to!ulong(t)]++;
+  }
+}
+
+private struct ExecutionStagesAnalysis {
+  // count of descriptor sets
+  ulong descriptorSetCount;
+  // counts of required descriptor types
+  DescriptorTypeCounter descriptorTypeCounter;
+  // vector of functions to execute when building the command buffer
+  WriteCommandBufferFn[] writeCommandBufferFns;
+  // memory regions by buffers
+  MemoryRegion[][] bufferRegions;
+  // pipeline layout by stage
+  VkPipelineLayout[] pipelineLayouts;
+  // pipeline info by stage
+  VkComputePipelineCreateInfo[] pipelineInfos;
+  // descriptor set layout handles by descriptor set by stage
+  VkDescriptorSetLayout[][] descriptorSetLayouts;
+  // region index by descriptor binding by descriptor set by stage
+  ulong[][][] descriptorRegionIndices;
+  // descriptor type by descriptor binding by descriptor set by stage
+  VkDescriptorType[][][] descriptorTypes;
+}
+
+ExecutionStagesAnalysis analyzeExecutionStages(ExecutionStage[] stages, VkShaderModule[] shaderModules, DescriptorSetLayoutCollection descriptorSetLayoutCol, PipelineLayoutCollection pipelineLayoutCol, ulong initialInputSize) {
+  ExecutionStagesAnalysis a;
+  immutable ulong stageCount = stages.length;
+  immutable ulong bufferCount = stageCount + 1;
+
+  a.descriptorSetCount = 0;
+
+  a.writeCommandBufferFns.length = stageCount;
+  a.pipelineLayouts.length = stageCount;
+  a.pipelineInfos.length = stageCount;
+  a.descriptorSetLayouts.length = stageCount;
+  a.descriptorRegionIndices.length = stageCount;
+  a.descriptorTypes.length = stageCount;
+
+  a.bufferRegions.length = bufferCount;
+
+  a.descriptorTypeCounter = new DescriptorTypeCounter();
+
+  ulong inputSize = initialInputSize;
+
+  foreach(i, stage; stages) {
+    ExecutionParameters p = stage.strategy.getExecutionParameters(inputSize);
+
+    assert(p.regions.length > 0);
+    assert(p.regions[0].size == inputSize);
+
+    a.writeCommandBufferFns[i] = p.writeCommandBuffer;
+    a.bufferRegions[i] = p.regions;
+
+    a.descriptorSetCount += p.regions.length;
+
+    ulong[] layoutIndices;
+    layoutIndices.length = p.layouts.length;
+
+    foreach(j, layout; p.layouts) {
+      VkDescriptorSetLayoutBinding[] layoutBindings = processLayoutBindings(layout);
+      layoutIndices[j] = descriptorSetLayoutCol.register(layoutBindings);
+    }
+
+    a.descriptorSetLayouts[i].length = p.descriptorSetIndices.length;
+    a.descriptorRegionIndices[i].length = p.descriptorSetIndices.length;
+    a.descriptorTypes[i].length = p.descriptorSetIndices.length;
+
+    foreach(j, dsIndices; p.descriptorSetIndices) {
+      a.descriptorSetLayouts[i][j] = descriptorSetLayoutCol.get(layoutIndices[dsIndices.layoutIndex]);
+      a.descriptorRegionIndices[i][j] = dsIndices.regionIndices;
+
+      BufferType[] layoutBufferTypes = p.layouts[dsIndices.layoutIndex];
+      a.descriptorTypes[i][j].length = dsIndices.regionIndices.length;
+      foreach(k, bufferType; layoutBufferTypes) {
+        VkDescriptorType dsType = descriptorTypeOfBufferType(bufferType);
+        a.descriptorTypes[i][j][k] = dsType;
+        a.descriptorTypeCounter.add(dsType);
+      }
+    }
+
+    ulong pipelineIndex = pipelineLayoutCol.register(layoutIndices);
+    a.pipelineLayouts[i] = pipelineLayoutCol.get(pipelineIndex);
+
+    VkComputePipelineCreateInfo pipelineInfo = {
+      stage: {
+        stage: VK_SHADER_STAGE_COMPUTE_BIT,
+        _module: shaderModules[stage.shaderModuleIndex],
+        pName: stage.entryPoint.ptr
+      },
+     layout: a.pipelineLayouts[i]
+    };
+
+    a.pipelineInfos[i] = pipelineInfo;
+
+    inputSize = p.outputSize;
+  }
+
+  a.bufferRegions[$-1] = [ MemoryRegion(uint.sizeof, inputSize / uint.sizeof) ];
+
+  return a;
+}
+
+
 class ExecutionPipeline {
   private Device device;
   private VkShaderModule[] shaderModules;
@@ -75,119 +190,41 @@ class ExecutionPipeline {
     device = d;
     shaderModules = map!(m => createShaderModule(device.logicalDevice, m.shaderCode))(modules).array;
 
+    bufferCount = stages.length + 1;
+
     // -- Collect and process execution parameters from stages
 
     descriptorSetLayoutCol = new DescriptorSetLayoutCollection(device);
     pipelineLayoutCol = new PipelineLayoutCollection(device, descriptorSetLayoutCol);
 
-    ulong[] pipelineLayoutIndices;
-    WriteCommandBufferFn[] writeCommandBufferFns;
-    MemoryRegion[][] bufferRegions;
-    uint[] descriptorTypeCounts;
-    VkDescriptorSetLayout[][] stageDescriptorSetLayouts;
-    ulong[][][] stageDescriptorRegionIndices;
-    VkDescriptorType[][][] stageDescriptorTypes;
-    VkComputePipelineCreateInfo[] pipelineInfos;
-
-    pipelineLayoutIndices.length = stages.length;
-    writeCommandBufferFns.length = stages.length;
-    pipelines.length = stages.length;
-    stageDescriptorSetLayouts.length = stages.length;
-    stageDescriptorRegionIndices.length = stages.length;
-    stageDescriptorTypes.length = stages.length;
-    pipelineInfos.length = stages.length;
-
-    bufferRegions.length = stages.length + 1;
-
-    // This is dependent on the input attachment type being the highest value in the api
-    descriptorTypeCounts.length = VkDescriptorType.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT + 1;
-
-    ulong inputSize = initialInputSize;
-    ulong descriptorSetCount = 0;
-
-    bufferCount = stages.length + 1;
-
-    foreach(i, stage; stages) {
-      ExecutionParameters p = stage.strategy.getExecutionParameters(inputSize);
-
-      assert(p.regions.length > 0);
-      assert(p.regions[0].size == inputSize);
-
-      writeCommandBufferFns[i] = p.writeCommandBuffer;
-      bufferRegions[i] = p.regions;
-
-      descriptorSetCount += p.regions.length;
-
-      ulong[] layoutIndices;
-      layoutIndices.length = p.layouts.length;
-
-      foreach(j, layout; p.layouts) {
-        VkDescriptorSetLayoutBinding[] layoutBindings = processLayoutBindings(layout);
-        layoutIndices[j] = descriptorSetLayoutCol.register(layoutBindings);
-      }
-
-      stageDescriptorSetLayouts[i].length = p.descriptorSetIndices.length;
-      stageDescriptorRegionIndices[i].length = p.descriptorSetIndices.length;
-      stageDescriptorTypes[i].length = p.descriptorSetIndices.length;
-
-      foreach(j, dsIndices; p.descriptorSetIndices) {
-        stageDescriptorSetLayouts[i][j] = descriptorSetLayoutCol.get(layoutIndices[dsIndices.layoutIndex]);
-        stageDescriptorRegionIndices[i][j] = dsIndices.regionIndices;
-
-        BufferType[] layoutBufferTypes = p.layouts[dsIndices.layoutIndex];
-        stageDescriptorTypes[i][j].length = dsIndices.regionIndices.length;
-        foreach(k, bufferType; layoutBufferTypes) {
-          VkDescriptorType dsType = descriptorTypeOfBufferType(bufferType);
-          stageDescriptorTypes[i][j][k] = dsType;
-          descriptorTypeCounts[dsType]++;
-        }
-      }
-
-      pipelineLayoutIndices[i] = pipelineLayoutCol.register(layoutIndices);
-      VkPipelineLayout pipelineLayout = pipelineLayoutCol.get(pipelineLayoutIndices[i]);
-
-      VkComputePipelineCreateInfo pipelineInfo = {
-        stage: {
-          stage: VK_SHADER_STAGE_COMPUTE_BIT,
-          _module: shaderModules[stage.shaderModuleIndex],
-          pName: stage.entryPoint.ptr
-        },
-       layout: pipelineLayout
-      };
-
-      pipelineInfos[i] = pipelineInfo;
-
-      inputSize = p.outputSize;
-    }
-
-    bufferRegions[$-1] = [ MemoryRegion(uint.sizeof, inputSize / uint.sizeof) ];
+    ExecutionStagesAnalysis sa = analyzeExecutionStages(stages, shaderModules, descriptorSetLayoutCol, pipelineLayoutCol, initialInputSize);
 
     // -- Create pipelines
     
-    pipelines.length = pipelineInfos.length;
-    enforceVk(vkCreateComputePipelines(device.logicalDevice, null, pipelineInfos.length.to!uint, pipelineInfos.ptr, null, pipelines.ptr));
+    pipelines.length = sa.pipelineInfos.length;
+    enforceVk(vkCreateComputePipelines(device.logicalDevice, null, sa.pipelineInfos.length.to!uint, sa.pipelineInfos.ptr, null, pipelines.ptr));
 
     // -- Allocate memory and descriptor sets
 
-    VkDescriptorSetLayout[] descriptorSetLayouts = flatten(stageDescriptorSetLayouts);
+    VkDescriptorSetLayout[] flatDescriptorSetLayouts = flatten(sa.descriptorSetLayouts);
 
-    memory = new Memory(device, bufferRegions);
-    dsPool = new DescriptorSetPool(device, descriptorTypeCounts, descriptorSetLayouts);
+    memory = new Memory(device, sa.bufferRegions);
+    dsPool = new DescriptorSetPool(device, sa.descriptorTypeCounter.counts, flatDescriptorSetLayouts);
 
     // -- Write descriptor sets
 
     DescriptorSetWriter writer = new DescriptorSetWriter(device);
     ulong descriptorSetIndex = 0;
 
-    foreach(i; iota(stageDescriptorRegionIndices.length)) {
-      foreach(j; iota(stageDescriptorRegionIndices[i].length)) {
-        foreach(k, regionIndex; stageDescriptorRegionIndices[i][j]) {
+    foreach(i; iota(sa.descriptorRegionIndices.length)) {
+      foreach(j; iota(sa.descriptorRegionIndices[i].length)) {
+        foreach(k, regionIndex; sa.descriptorRegionIndices[i][j]) {
           VkDescriptorSet set = dsPool.sets[descriptorSetIndex];
-          VkDescriptorType t = stageDescriptorTypes[i][j][k];
+          VkDescriptorType t = sa.descriptorTypes[i][j][k];
 
           RegionDescriptor regionDesc;
           VkBuffer buffer;
-          if(regionIndex == bufferRegions[i].length) {
+          if(regionIndex == sa.bufferRegions[i].length) {
             regionDesc = memory.getRegionDescriptor(i + 1, 0);
             buffer = memory.getBuffer(i + 1);
           } else {
@@ -229,10 +266,10 @@ class ExecutionPipeline {
 
     descriptorSetIndex = 0;
     foreach(i, stage; stages) {
-      ulong descriptorSetLength = stageDescriptorRegionIndices[i].length;
+      ulong descriptorSetLength = sa.descriptorRegionIndices[i].length;
 
       vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[i]);
-      writeCommandBufferFns[i](commandBuffer, pipelineLayoutCol.get(pipelineLayoutIndices[i]), dsPool.sets[descriptorSetIndex..descriptorSetIndex + descriptorSetLength]);
+      sa.writeCommandBufferFns[i](commandBuffer, sa.pipelineLayouts[i], dsPool.sets[descriptorSetIndex..descriptorSetIndex + descriptorSetLength]);
 
       descriptorSetIndex += descriptorSetLength;
     }
