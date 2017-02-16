@@ -8,6 +8,13 @@ addons:
       - debian-sid
     packages:
       - software-properties-common
+      - build-essential
+      - bison
+      - libx11-xcb-dev
+      - libxkbcommon-dev
+      - libmirclient-dev
+      - libwayland-dev
+      - libxrandr-dev
       - libvulkan-dev
       - libvulkan1
       - vulkan-utils
@@ -15,5 +22,6 @@ addons:
 before_script:
   - git clone --branch spirv-1.1-rev1 https://github.com/KhronosGroup/SPIRV-Tools.git ~/spirv-tools
   - git clone https://github.com/KhronosGroup/SPIRV-Headers.git ~/spirv-tools/external/spirv-headers
+  - git clone --branch sdk-1.0.8.0 https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers ~/Vulkan-LoaderAndValidationLayers
 
 script: bash -ex .travis-ci.sh
