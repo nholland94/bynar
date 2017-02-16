@@ -256,6 +256,39 @@ unittest {
   cleanupTest();
 }
 
-/// test linear constructors
+/// linear pipelines
 unittest {
+  void runAndCheck(ExecutionModule[] modules, ExecutionStage[] stages, uint[] data, uint[] expectation) {
+    uint[] output = runTest(modules, stages, data);
+    assert(output.length == expectation.length);
+    foreach(i; iota(output.length)) {
+      assert(output[i] == expectation[i]);
+    }
+  }
+
+  prepareTest();
+
+  writeln("=======================");
+  writeln("Copy and reduce");
+  writeln("=======================");
+
+  {
+    uint[] data = randomData(1_024, 5_000);
+    uint sum = fold!"a+b"(data);
+
+    InputRelExp identityExp = { bytecode: castFrom!(InputRelOp[]).to!(int[])([InputRelOp.Input]).ptr };
+
+    ExecutionModule[] modules = [
+      loadExecutionModule("copy.spv"),
+      loadExecutionModule("reduce.spv")
+    ];
+    ExecutionStage[] stages = [
+      { 0, "f", new Sequential(identityExp) },
+      { 1, "f", new Reductive() }
+    ];
+
+    runAndCheck(modules, stages, data, [sum]);
+  }
+
+  cleanupTest();
 }

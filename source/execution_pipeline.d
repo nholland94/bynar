@@ -70,7 +70,6 @@ class ExecutionPipeline {
   private VkCommandBuffer commandBuffer;
 
   private ulong bufferCount;
-  private ulong lastRegionCount;
 
   this(Device d, ExecutionModule[] modules, ExecutionStage[] stages, ulong initialInputSize) {
     device = d;
@@ -93,11 +92,12 @@ class ExecutionPipeline {
     pipelineLayoutIndices.length = stages.length;
     writeCommandBufferFns.length = stages.length;
     pipelines.length = stages.length;
-    bufferRegions.length = stages.length;
     stageDescriptorSetLayouts.length = stages.length;
     stageDescriptorRegionIndices.length = stages.length;
     stageDescriptorTypes.length = stages.length;
     pipelineInfos.length = stages.length;
+
+    bufferRegions.length = stages.length + 1;
 
     // This is dependent on the input attachment type being the highest value in the api
     descriptorTypeCounts.length = VkDescriptorType.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT + 1;
@@ -105,17 +105,18 @@ class ExecutionPipeline {
     ulong inputSize = initialInputSize;
     ulong descriptorSetCount = 0;
 
-    bufferCount = stages.length;
-    lastRegionCount = stages.length;
+    bufferCount = stages.length + 1;
 
     foreach(i, stage; stages) {
       ExecutionParameters p = stage.strategy.getExecutionParameters(inputSize);
+
+      assert(p.regions.length > 0);
+      assert(p.regions[0].size == inputSize);
 
       writeCommandBufferFns[i] = p.writeCommandBuffer;
       bufferRegions[i] = p.regions;
 
       descriptorSetCount += p.regions.length;
-      lastRegionCount = p.regions.length;
 
       ulong[] layoutIndices;
       layoutIndices.length = p.layouts.length;
@@ -156,8 +157,10 @@ class ExecutionPipeline {
 
       pipelineInfos[i] = pipelineInfo;
 
-      inputSize = p.regions[$-1].size;
+      inputSize = p.outputSize;
     }
+
+    bufferRegions[$-1] = [ MemoryRegion(uint.sizeof, inputSize / uint.sizeof) ];
 
     // -- Create pipelines
     
@@ -179,12 +182,20 @@ class ExecutionPipeline {
     foreach(i; iota(stageDescriptorRegionIndices.length)) {
       foreach(j; iota(stageDescriptorRegionIndices[i].length)) {
         foreach(k, regionIndex; stageDescriptorRegionIndices[i][j]) {
-          VkBuffer buffer;
-          ulong offset, size;
           VkDescriptorSet set = dsPool.sets[descriptorSetIndex];
           VkDescriptorType t = stageDescriptorTypes[i][j][k];
-          destruct!(buffer, offset, size) = memory.getRegion(i, regionIndex);
-          writer.write(set, k.to!uint, t, buffer, offset, size);
+
+          RegionDescriptor regionDesc;
+          VkBuffer buffer;
+          if(regionIndex == bufferRegions[i].length) {
+            regionDesc = memory.getRegionDescriptor(i + 1, 0);
+            buffer = memory.getBuffer(i + 1);
+          } else {
+            regionDesc = memory.getRegionDescriptor(i, regionIndex);
+            buffer = memory.getBuffer(i);
+          }
+
+          writer.write(set, k.to!uint, t, buffer, regionDesc.bufferOffset, regionDesc.sizes.dataSize);
         }
         descriptorSetIndex++;
       }
@@ -253,6 +264,6 @@ class ExecutionPipeline {
 
     // writeln(memory.dumpMemory());
 
-    return memory.copyRegion!T(bufferCount - 1, lastRegionCount - 1);
+    return memory.copyRegion!T(bufferCount - 1, 0);
   }
 }

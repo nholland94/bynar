@@ -33,6 +33,7 @@ struct DescriptorSetIndices {
 }
 
 struct ExecutionParameters {
+  ulong outputSize;
   BufferType[][] layouts;
   MemoryRegion[] regions;
   DescriptorSetIndices[] descriptorSetIndices;
@@ -58,12 +59,12 @@ class Sequential : ExecutionStrategy {
 
     ulong outputSize = outputExp.evaluate(inputSize);
     ExecutionParameters parameters = {
+      outputSize: outputSize,
       layouts: [
         [ BufferType.STORAGE_BUFFER, BufferType.STORAGE_BUFFER ]
       ],
       regions: [
-        MemoryRegion(uint.sizeof, inputSize / uint.sizeof),
-        MemoryRegion(uint.sizeof, outputSize / uint.sizeof),
+        MemoryRegion(uint.sizeof, inputSize / uint.sizeof)
       ],
       descriptorSetIndices: [ { 0, [ 0, 1 ] } ],
       writeCommandBuffer: &writeCommandBuffer
@@ -87,7 +88,7 @@ class Reductive : ExecutionStrategy {
       halfLength = lengthLeft / 2 + lengthLeft % 2;
       brs[++brs.length - 1] = halfLength.to!uint;
       lengthLeft = halfLength;
-    } while(lengthLeft > 1);
+    } while(lengthLeft > 2);
 
     return brs;
   }
@@ -107,11 +108,11 @@ class Reductive : ExecutionStrategy {
 
     Reductive r = new Reductive();
 
-    assert(equal(r.calculateBranches(256), [128, 64, 32, 16, 8, 4, 2, 1]));
-    assert(equal(r.calculateBranches(46), [23, 12, 6, 3, 2, 1]));
-    assert(equal(r.calculateBranches(100), [50, 25, 13, 7, 4, 2, 1]));
-    assert(equal(r.calculateBranches(61), [31, 16, 8, 4, 2, 1]));
-    assert(equal(r.calculateBranches(63), [32, 16, 8, 4, 2, 1]));
+    assert(equal(r.calculateBranches(256), [128, 64, 32, 16, 8, 4, 2]));
+    assert(equal(r.calculateBranches(46), [23, 12, 6, 3, 2]));
+    assert(equal(r.calculateBranches(100), [50, 25, 13, 7, 4, 2]));
+    assert(equal(r.calculateBranches(61), [31, 16, 8, 4, 2]));
+    assert(equal(r.calculateBranches(63), [32, 16, 8, 4, 2]));
   }
 
   ExecutionParameters getExecutionParameters(ulong inputSize) {
@@ -124,7 +125,7 @@ class Reductive : ExecutionStrategy {
         dstAccessMask: VK_ACCESS_SHADER_READ_BIT,
       };
 
-      foreach(i, branchSize; branches) {
+      foreach(i, branchSize; branches ~ [1u]) {
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, [descriptorSets[i]].ptr, 0, null);
         vkCmdDispatch(commandBuffer, branchSize.to!int, 1, 1);
 
@@ -142,9 +143,10 @@ class Reductive : ExecutionStrategy {
       }
     }
 
-    DescriptorSetIndices[] descriptorSetIndices = map!( i => DescriptorSetIndices(0, [ i, i + 1 ]))(iota(branches.length)).array;
+    DescriptorSetIndices[] descriptorSetIndices = map!( i => DescriptorSetIndices(0, [ i, i + 1 ]))(iota(branches.length + 1)).array;
 
     ExecutionParameters parameters = {
+      outputSize: uint.sizeof,
       layouts: [
         [ BufferType.STORAGE_BUFFER, BufferType.STORAGE_BUFFER ]
       ],

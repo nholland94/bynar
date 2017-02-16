@@ -2,6 +2,7 @@ import std.algorithm.iteration;
 import std.conv;
 import std.typecons;
 import std.range;
+import std.stdio;
 
 import erupted;
 
@@ -33,16 +34,26 @@ struct MemorySizes {
   ulong blockSize;
 }
 
+struct RegionDescriptor {
+  MemorySizes sizes;
+  ulong bufferOffset;
+  ulong memoryOffset;
+}
+
+struct BufferDescriptor {
+  MemorySizes sizes;
+  ulong memoryOffset;
+  RegionDescriptor[] regions;
+}
+
 class Memory {
   ulong memorySize;
-  VkDeviceMemory memory;
-  VkBuffer[] buffers;
 
   private Device device;
-
+  private VkDeviceMemory memory;
+  private VkBuffer[] buffers;
   private MemoryRegion[][] bufferRegions;
-  private MemorySizes[] bufferSizes;
-  private MemorySizes[][] regionSizes;
+  private BufferDescriptor[] bufferDescriptors;
 
   this(Device device, MemoryRegion[][] bufferRegions) {
     this.device = device;
@@ -62,29 +73,33 @@ class Memory {
 
     memorySize = 0;
     buffers.length = bufferRegions.length;
-    bufferSizes.length = bufferRegions.length;
-    regionSizes.length = bufferRegions.length;
+    bufferDescriptors.length = bufferRegions.length;
 
     foreach(i, regions; bufferRegions) {
-      ulong regionOffset = 0;
-      regionSizes[i].length = regions.length;
+      bufferDescriptors[i].memoryOffset = memorySize;
+
+      ulong regionBufferOffset = 0;
+      ulong regionMemoryOffset = memorySize;
+      bufferDescriptors[i].regions.length = regions.length;
 
       foreach(j, region; regions) {
         ulong size = region.size();
         ulong blockSize = alignSize(size, device.getLimits().minStorageBufferOffsetAlignment);
-        MemorySizes regionSize = { size, blockSize };
-        regionSizes[i][j] = regionSize;
-        regionOffset += blockSize;
+
+        bufferDescriptors[i].regions[j] = RegionDescriptor(MemorySizes(size, blockSize), regionBufferOffset, regionMemoryOffset);
+
+        regionBufferOffset += blockSize;
+        regionMemoryOffset += blockSize;
       }
 
-      bufferInfo.size = regionOffset;
+      bufferInfo.size = regionBufferOffset;
       enforceVk(vkCreateBuffer(device.logicalDevice, &bufferInfo, null, &buffers[i]));
 
       vkGetBufferMemoryRequirements(device.logicalDevice, buffers[i], &memoryRequirements);
 
       ulong bufferBlockSize = alignSize(bufferInfo.size, memoryRequirements.alignment);
-      MemorySizes bufferSize = { bufferInfo.size, bufferBlockSize };
-      bufferSizes[i] = bufferSize;
+      bufferDescriptors[i].sizes = MemorySizes(bufferInfo.size, bufferBlockSize);
+
       memorySize += bufferBlockSize;
     }
 
@@ -106,7 +121,7 @@ class Memory {
 
     foreach(i, buffer; buffers) {
       vkBindBufferMemory(device.logicalDevice, buffer, memory, bufferOffset);
-      bufferOffset += bufferSizes[i].blockSize;
+      bufferOffset += bufferDescriptors[i].sizes.blockSize;
     }
   }
 
@@ -115,28 +130,23 @@ class Memory {
     vkFreeMemory(device.logicalDevice, memory, null);
   }
 
-  Tuple!(VkBuffer, ulong, ulong) getRegion(ulong bufferIndex, ulong regionIndex) {
-    assert(bufferIndex < bufferSizes.length);
+  RegionDescriptor getRegionDescriptor(ulong bufferIndex, ulong regionIndex) {
+    assert(bufferIndex < bufferDescriptors.length);
 
-    ulong offset;
+    BufferDescriptor d = bufferDescriptors[bufferIndex];
+    assert(regionIndex < d.regions.length);
 
-    foreach(i, bufferSize; bufferSizes) {
-      if(i == bufferIndex) {
-        assert(regionIndex < regionSizes[i].length);
+    return d.regions[regionIndex];
+  }
 
-        foreach(j, regionSize; regionSizes[i]) {
-          if(j == regionIndex) {
-            return tuple!(VkBuffer, ulong, ulong)(buffers[i], offset, regionSize.dataSize);
-          } else {
-            offset += regionSize.blockSize;
-          }
-        }
-      } else {
-        offset += bufferSize.blockSize;
-      }
-    }
+  BufferDescriptor getBufferDescriptor(ulong bufferIndex) {
+    assert(bufferIndex < bufferDescriptors.length);
+    return bufferDescriptors[bufferIndex];
+  }
 
-    throw new Exception("Failed to get region");
+  VkBuffer getBuffer(ulong bufferIndex) {
+    assert(bufferIndex < buffers.length);
+    return buffers[bufferIndex];
   }
 
   private T[] copyMemory(T)(ulong offset, ulong size) {
@@ -188,25 +198,18 @@ class Memory {
   }
 
   T[] copyRegion(T)(ulong bufferIndex, ulong regionIndex) {
-    VkBuffer buffer;
-    ulong offset, size;
-    destruct!(buffer, offset, size) = getRegion(bufferIndex, regionIndex);
-    return copyMemory!T(offset, size);
+    RegionDescriptor d = getRegionDescriptor(bufferIndex, regionIndex);
+    return copyMemory!T(d.memoryOffset, d.sizes.dataSize);
   }
 
   T[] copyBuffer(T)(ulong bufferIndex) {
-    assert(bufferIndex < bufferSizes.length);
-
-    auto sumBlockSize = function (a, b) => a.blockSize + b.blockSize;
-    ulong offset = fold!sumBlockSize(bufferSizes[0..bufferIndex]);
-    return copyMemory!T(offset, bufferSizes[bufferIndex].dataSize);
+    BufferDescriptor d = getBufferDescriptor(bufferIndex);
+    return copyMemory!T(offset, d.memoryOffset);
   }
 
   void writeRegion(T)(ulong bufferIndex, ulong regionIndex, T[] data) {
-    VkBuffer buffer;
-    ulong offset, size;
-    destruct!(buffer, offset, size) = getRegion(bufferIndex, regionIndex);
-    writeMemory!T(offset, size, data);
+    RegionDescriptor d = getRegionDescriptor(bufferIndex, regionIndex);
+    writeMemory!T(d.memoryOffset, d.sizes.dataSize, data);
   }
 
   uint[] dumpMemory() {
