@@ -3,3 +3,4 @@ __test__library__
 core
 ..-..-.*
 bynar
+shaders/*.spv

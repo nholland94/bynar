@@ -4,6 +4,7 @@ import std.conv;
 import std.datetime;
 import std.exception;
 import std.file;
+import std.process;
 import std.random;
 import std.range;
 import std.stdio;
@@ -174,7 +175,27 @@ uint[] runTest(ExecutionModule[] modules, ExecutionStage[] stages, uint[] data) 
 }
 
 ExecutionModule loadExecutionModule(string name) {
-  uint[] code = castFrom!(void[]).to!(uint[])(read(name));
+  string spvFilename = "shaders/" ~ name;
+  string sourceFilename = spvFilename[0..$-3] ~ "spirv";
+
+  if(!exists(spvFilename)) {
+    if(!exists(sourceFilename)) throw new Exception("Shader source filename does not exist");
+    auto spirvAs = execute(["spirv-as", "-o", spvFilename, sourceFilename]);
+    if(spirvAs.status != 0) {
+      writeln(spirvAs.output);
+      if(exists(spvFilename)) remove(spvFilename);
+      throw new Exception("Failed to compile source file");
+    }
+
+    auto spirvVal = execute(["spirv-val", spvFilename]);
+    if(spirvVal.status != 0) {
+      writeln(spirvVal.output);
+      remove(spvFilename);
+      throw new Exception("Failed to validate shader");
+    }
+  }
+
+  uint[] code = castFrom!(void[]).to!(uint[])(read(spvFilename));
   return ExecutionModule(name, code);
 }
 
