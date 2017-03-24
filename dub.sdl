@@ -9,11 +9,13 @@ subConfiguration "erupted" "with-derelict-loader"
 
 configuration "app" {
   targetType "executable"
-  excludedSourceFiles "source/benchmark.d"
+  mainSourceFile "source/app.d"
+  excludedSourceFiles "source/bench.d"
 }
 
 configuration "benchmark" {
+  dependency "progress-d" version="~>1.0.0"
   targetType "executable"
-  mainSourceFile "source/benchmark.d"
+  mainSourceFile "source/bench.d"
   excludedSourceFiles "source/app.d"
 }

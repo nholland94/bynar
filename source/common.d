@@ -43,6 +43,10 @@ bool arrayEqual(Range)(Range a, Range b) {
   return true;
 }
 
+T roundUp(T)(T n, T roundTo) {
+  return n + (roundTo - n % roundTo);
+}
+
 size_t alignSize(size_t size, size_t alignment) {
   size_t remainder = size % alignment;
   return remainder == 0 ? size : size + alignment - remainder;

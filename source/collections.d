@@ -59,7 +59,7 @@ class DescriptorSetLayoutCollection : AtomicKeyedCollection!(VkDescriptorSetLayo
   }
 }
 
-class PipelineLayoutCollection : AtomicKeyedCollection!(ulong[], VkPipelineLayout) {
+class PipelineLayoutCollection : AtomicKeyedCollection!(Tuple!(ulong[], VkPushConstantRange[]), VkPipelineLayout) {
   private Device device;
   private DescriptorSetLayoutCollection dsLayoutCollection;
 
@@ -68,16 +68,22 @@ class PipelineLayoutCollection : AtomicKeyedCollection!(ulong[], VkPipelineLayou
     this.dsLayoutCollection = dsLayoutCollection;
   }
 
-  override bool keysEqual(ulong[] a, ulong[] b) {
-    return arrayEqual(a, b);
+  override bool keysEqual(Tuple!(ulong[], VkPushConstantRange[]) a, Tuple!(ulong[], VkPushConstantRange[]) b) {
+    return arrayEqual(a[0], b[0]) && arrayEqual(a[1], b[1]);
   }
 
-  override void addValue(ulong[] layoutIndices) {
+  override void addValue(Tuple!(ulong[], VkPushConstantRange[]) params) {
+    ulong[] layoutIndices;
+    VkPushConstantRange[] pushConstantRanges;
+    destruct!(layoutIndices, pushConstantRanges) = params;
+
     VkDescriptorSetLayout[] descriptorSetLayouts = map!(i => dsLayoutCollection.get(i))(layoutIndices).array;
 
     VkPipelineLayoutCreateInfo layoutInfo = {
       setLayoutCount: descriptorSetLayouts.length.to!uint,
-      pSetLayouts: descriptorSetLayouts.ptr
+      pSetLayouts: descriptorSetLayouts.ptr,
+      pushConstantRangeCount: pushConstantRanges.length.to!uint,
+      pPushConstantRanges: pushConstantRanges.ptr
     };
 
     values.length++;

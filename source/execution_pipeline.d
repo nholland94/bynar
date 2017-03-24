@@ -2,7 +2,7 @@ import std.algorithm.iteration;
 import std.array;
 import std.conv;
 import std.range;
-
+import std.typecons;
 import std.stdio;
 
 import erupted;
@@ -150,7 +150,7 @@ ExecutionStagesAnalysis analyzeExecutionStages(ExecutionStage[] stages, VkShader
       }
     }
 
-    ulong pipelineIndex = pipelineLayoutCol.register(layoutIndices);
+    ulong pipelineIndex = pipelineLayoutCol.register(tuple!(ulong[], VkPushConstantRange[])(layoutIndices, p.pushConstantRanges));
     a.pipelineLayouts[i] = pipelineLayoutCol.get(pipelineIndex);
 
     VkComputePipelineCreateInfo pipelineInfo = {
@@ -181,6 +181,7 @@ class ExecutionPipeline {
   private PipelineLayoutCollection pipelineLayoutCol;
   private Memory memory;
   private DescriptorSetPool dsPool;
+  private VkFence fence;
   private VkCommandPool commandPool;
   private VkCommandBuffer commandBuffer;
 
@@ -240,7 +241,7 @@ class ExecutionPipeline {
 
     writer.flush();
 
-    // -- Allocate command buffer
+    // -- Allocate command buffer and fence
 
     VkCommandPoolCreateInfo commandPoolInfo = {
       queueFamilyIndex: device.queueFamilyIndex
@@ -255,6 +256,10 @@ class ExecutionPipeline {
     };
 
     enforceVk(vkAllocateCommandBuffers(device.logicalDevice, &commandBufferAllocateInfo, &commandBuffer));
+
+    VkFenceCreateInfo fenceInfo = {};
+
+    enforceVk(vkCreateFence(device.logicalDevice, &fenceInfo, null, &fence));
 
     // -- Write command buffer
 
@@ -286,6 +291,7 @@ class ExecutionPipeline {
     pipelines.each!(p => vkDestroyPipeline(device.logicalDevice, p, null));
     shaderModules.each!(m => vkDestroyShaderModule(device.logicalDevice, m, null));
     vkDestroyCommandPool(device.logicalDevice, commandPool, null);
+    vkDestroyFence(device.logicalDevice, fence, null);
   }
 
   T[] execute(T)(T[] data) {
@@ -296,8 +302,10 @@ class ExecutionPipeline {
       pCommandBuffers: [commandBuffer].ptr
     };
 
-    enforceVk(vkQueueSubmit(device.queue, 1, &submitInfo, null));
+    enforceVk(vkQueueSubmit(device.queue, 1, &submitInfo, fence));
+    // TODO: retry after timeout
     enforceVk(vkQueueWaitIdle(device.queue));
+    enforceVk(vkWaitForFences(device.logicalDevice, 1, [fence].ptr, true, 0));
 
     // writeln(memory.dumpMemory());
 

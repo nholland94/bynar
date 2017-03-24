@@ -123,6 +123,24 @@ class Memory {
       vkBindBufferMemory(device.logicalDevice, buffer, memory, bufferOffset);
       bufferOffset += bufferDescriptors[i].sizes.blockSize;
     }
+
+    // -- Zero allocated memory (temporary)
+    
+    uint *mem;
+    enforceVk(vkMapMemory(
+        device.logicalDevice,
+        memory,
+        0,
+        memorySize,
+        0,
+        castFrom!(uint**).to!(void**)(&mem)
+    ));
+
+    for(ulong i = 0; i < memorySize / uint.sizeof; i++) {
+      *(mem + i) = 0;
+    }
+
+    vkUnmapMemory(device.logicalDevice, memory);
   }
 
   void cleanup() {
